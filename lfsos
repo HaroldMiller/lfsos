@@ -1,0 +1,227 @@
+#!/bin/sh
+#
+# lfsos - Display local filesystem info from a sosreport file
+#
+#
+# Authors:       Leonardo Vaz <leo@redhat.com>
+#                Harold Miller <harold@redhat.com>
+#
+# Changelog:
+#
+# * Wed Jul 02 2014 - 0.3
+# - Replaced printf for echo
+# - Log parsing for ABRT messages
+# - Script now handles gzipped logs
+#
+# * Tue Jun 24 2014 - 0.2
+# - Error handling
+# - Log parsing for local filesystem, SCSI and Multipath
+#
+# * Mon Jun 23 2014 - 0.1
+# - First version
+#
+# Todo:
+# - Include hardware information
+# - VMWare kernel modules loaded and services
+#
+#-----------------------------------------------------------------
+if [ ! -z "$1" ]; then
+	DIR=$1
+else
+	echo -en "\n Usage: $0 /path/to/sosreport_directory \n\n"
+	exit 1
+fi
+
+if [ -d ${DIR} ]; then
+	if [ -f ${DIR}/etc/redhat-release ] && [ -f ${DIR}/uname ]; then
+		cd ${DIR}
+	else
+		echo -en "Error: seems $(pwd) doesn't have sosreport files.\n"
+		exit 2
+	fi
+else
+	echo -en "Error: the directory ${DIR} doesn't exist.\n"
+	exit 3
+fi
+
+echo -en "[OS Information]\n"
+
+if [ -f hostname ]; then
+	echo -en "   Hostname:  $(grep -v "^$" hostname)\n"
+else
+	echo -en "   Hostname:  [missing file]\n"
+fi
+
+if [ -f etc/redhat-release ]; then
+	echo -en "   Release:   $(cat etc/redhat-release)\n"
+else
+	echo -en "   Release:   [missing file]\n"
+fi
+
+if [ -f uname ]; then
+	echo -en "   Kernel:    $(awk '{print $3}' uname)\n"
+else
+	echo -en "   Kernel:    [missing file]\n"
+fi
+
+if [ -f date ]; then
+	echo -en "   Sys time:  $(grep -v "^$" date)\n"
+else
+	echo -en "   Sys time:  [missing file]\n"
+fi
+
+if [ -f uptime ]; then
+	echo -en "   Uptime:     $(cut -d, -f-3 uptime |sed 's/^ \+ //g')\n"
+    echo -en "   Load:      $(cut -d, -f4- uptime |sed 's/^ \+ //g')\n"
+else
+	echo -en "   Uptime:    [missing file]\n"
+	echo -en "   Load:      [missing file]\n"
+fi
+
+
+
+echo -en "\n\n[Memory]\n"
+
+if [ -f free ]; then
+	echo -en "   Total:     $(($(grep ^Mem: free | awk '{print $2}') / 1024)) MB\n"
+	echo -en "   Used:      $(($(grep ^Mem: free | awk '{print $3}') / 1024)) MB\n"
+	echo -en "   Free:      $(($(grep ^Mem: free | awk '{print $4}') / 1024)) MB\n"
+	echo -en "   Buffers:   $(($(grep ^Mem: free | awk '{print $6}') / 1024)) MB\n"
+	echo -en "   Cached:    $(($(grep ^Mem: free | awk '{print $7}') / 1024)) MB\n"
+else
+    echo -en "   Total:     [missing file]\n"
+    echo -en "   Used:      [missing file]\n"
+    echo -en "   Free:      [missing file]\n"
+    echo -en "   Buffers:   [missing file]\n"
+    echo -en "   Cached:    [missing file]\n"
+fi
+
+
+echo -en "\n\n[Installed packages]\n"
+
+if [ -f installed-rpms ]; then
+	for package in kernel e2fsprogs xfsprogs; do
+		grep "^${package}" installed-rpms | sed 's/^/   /'
+	done
+else
+   echo -en "   File installed-rpms not found\n\n"
+fi
+
+echo -en "\n\n[Local filesystems]\n"
+
+if [ -f etc/fstab ]; then
+	echo -en "   ##### /etc/fstab #####\n"
+	egrep -w '(ext2|ext3|ext4|xfs|btrfs)' etc/fstab | \
+		sed -e 's/ \+ /\t/g' -e 's/^/   /'
+else
+	echo -en "   File etc/fstab not found\n\n" 
+fi
+
+if [ -f proc/mounts ]; then
+	echo -en "   ##### /proc/mounts #####\n"
+    egrep -w '(ext2|ext3|ext4|xfs|btrfs)' proc/mounts | \
+		sed -e 's/ \+ /\t/g' -e 's/^/   /'
+else
+	echo -en "   File proc/mounts not found\n\n"
+fi
+
+
+echo -en "\n\n[Filesystem UUIDs]\n"
+
+if [ -f sos_commands/filesys/blkid_-c_.dev.null ]; then 
+    egrep -w '(ext2|ext3|ext4|xfs|btrfs)' sos_commands/filesys/blkid_-c_.dev.null | \
+		sed -e 's/ \+ /\t/g' -e 's/^/   /'
+else
+	echo -en "   File sos_commands/filesys/blkid_-c_.dev.null not found\n\n"
+fi
+
+echo -en "\n\n[File system disk space usage]\n"
+
+if [ -f df ]; then
+    egrep -v '(proc|sysfs|devpts|tmpfs|none|sunrpc|nfsd)' df | \
+		sed -e 's/ \+ /\t/g' -e 's/^/   /'
+else
+	echo -en "   File df not found\n\n"  
+fi
+
+
+
+echo -en "\n\n[Block devices]\n"
+
+if [ -f sos_commands/filesys/lsblk ]; then
+	cat sos_commands/filesys/lsblk | \
+		sed 's/^/   /'
+else
+	echo -en "   File sos_commands/filesys/lsblk not found\n\n"
+fi
+
+echo -en "\n\n[Processes in D-state]\n"
+
+if [ -f ps ]; then
+    echo -en "   PID\tSTAT\tCOMMAND\n"
+    awk '{print $2"\t"$8"\t"$11 }' ps |grep -w "D" | \
+		sed 's/^/   /'
+else  
+	echo -en "   File ps not found\n\n"
+fi
+
+echo -en "\n\n[Interesting messages entries]\n"
+
+if [ -f var/log/messages ]; then
+	echo -en "\n   [Local File Systems]\n\n"
+	ls -1h var/log/messages-* | while read f; do
+		if echo "$f" | grep ".gz$" >/dev/null; then
+			zegrep -wi '(xfs|btrfs|EXT3-fs|EXT4-fs)' $f | sed 's/^/   /'
+		else
+			egrep -wi '(xfs|btrfs|EXT3-fs|EXT4-fs)' $f | sed 's/^/   /'
+		fi
+	done
+    egrep -wi '(xfs|btrfs|EXT3-fs|EXT4-fs)' var/log/messages | \
+        sed 's/^/    /'
+
+	echo -en "\n   [SCSI entries]\n\n"
+	ls -1h var/log/messages-* | while read f; do
+		if echo "$f" | grep ".gz$" >/dev/null; then
+			zgrep -i "scsi" $f | sed 's/^/   /'
+		else
+			grep -i "scsi" $f | sed 's/^/   /'
+		fi		
+	done
+	grep -i "scsi" var/log/messages | sed 's/^/   /'
+
+	echo -en "\n   [Multipath entries]\n\n"
+	ls -1h var/log/messages-* | while read f; do
+		if echo "$f" | grep ".gz$" >/dev/null; then
+		    zgrep -i "multipathd" $f | sed 's/^/   /'
+		else
+		    grep -i "multipathd" $f | sed 's/^/   /'
+		fi
+	done
+    grep -i "multipathd" var/log/messages | sed 's/^/   /'
+
+	echo -en "\n   [Red Hat Cluster Suite entries]\n\n"
+	ls -1h var/log/messages-* | while read f; do
+		if echo "$f" | grep ".gz$" >/dev/null; then
+			zgrep -i "rgmanager" $f | sed 's/^/   /'
+		else
+			grep -i "rgmanager" $f | sed 's/^/   /'
+		fi
+	done
+    grep -i "rgmanager" var/log/messages | sed 's/^/   /'
+
+	echo -en "\n   [ABRT entries]\n\n"
+	ls -1h var/log/messages-* | while read f; do
+		if echo "$f" | grep ".gz$" >/dev/null; then
+			zgrep -i "abrtd" $f | sed 's/^/   /'
+		else
+		    grep -i "abrtd" $f | sed 's/^/   /'
+		fi
+	done
+    grep -i "abrtd" var/log/messages | sed 's/^/   /'
+
+else
+	echo -en "   File var/log/messages not found\n\n"
+fi
+
+
+# EOF

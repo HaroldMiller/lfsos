@@ -1,0 +1,115 @@
+#!/bin/sh
+#
+# lfsos - Extract information about local filesystems from a sosreport
+#
+#
+# Authors:       Leonardo Vaz <leo@redhat.com>
+#                Harold Miller <harold@redhat.com>
+# 
+# Changelog:
+# * Tue Jun 24 2014 - 0.1
+# - Initial version
+#
+# Todo:
+# - Include hardware information
+# - VMWare kernel modules loaded and services
+# - Red Hat Cluster Suite services
+# - Parse dmesg and messages log
+#
+#
+#-----------------------------------------------------------------
+DIR=$1
+
+if [ -f ${DIR}/etc/redhat-release ] && [ -f ${DIR}/uname ]; then
+	cd ${DIR}
+else
+	printf "\n Usage: $0 /path/to/sosreport_directory \n\n"
+	exit 1
+fi
+
+printf "[OS information]\n"
+
+if [ -f hostname ]; then
+	printf "   Hostname:  $(grep -v "^$" hostname)\n"
+fi
+
+if [ -f etc/redhat-release ]; then
+	printf "   Release:   $(cat etc/redhat-release)\n"
+fi
+
+if [ -f uname ]; then
+	printf "   Kernel:    $(awk '{print $3}' uname)\n"
+fi
+
+if [ -f date ]; then
+	printf "   Sys time:  $(grep -v "^$" date)\n"
+fi
+
+if [ -f uptime ]; then
+	printf "   Uptime:   $(cut -d, -f-3 uptime |sed 's/^ \+ //g')\n"
+    printf "   Load:      $(cut -d, -f4- uptime |sed 's/^ \+ //g')\n"
+fi
+
+
+printf "[Memory]\n"
+
+if [ -f free ]; then
+	printf "   Total:     $(($(grep ^Mem: free | awk '{print $2}') / 1024)) MB\n"
+	printf "   Used:      $(($(grep ^Mem: free | awk '{print $3}') / 1024)) MB\n"
+	printf "   Free:      $(($(grep ^Mem: free | awk '{print $4}') / 1024)) MB\n"
+	printf "   Buffers:   $(($(grep ^Mem: free | awk '{print $6}') / 1024)) MB\n"
+	printf "   Cached:    $(($(grep ^Mem: free | awk '{print $7}') / 1024)) MB\n"
+fi
+
+printf "[Installed packages]\n"
+
+if [ -f installed-rpms ]; then
+	for package in kernel e2fsprogs xfsprogs; do
+		grep "^${package}-" installed-rpms | sed 's/^/   /'
+	done
+fi
+
+printf "[Local filesystems in /etc/fstab]\n"
+
+if [ -f etc/fstab ]; then
+	egrep -w '(ext2|ext3|ext4|xfs|btrfs)' etc/fstab | \
+		sed -e 's/ \+ /\t/g' -e 's/^/   /'
+fi
+
+printf "[Mounted filesystems]\n"
+
+if [ -f proc/mounts ]; then
+    egrep -w '(ext2|ext3|ext4|xfs|btrfs)' proc/mounts | \
+		sed -e 's/ \+ /\t/g' -e 's/^/   /'
+fi
+
+printf "[Filesystem UUIDs]\n"
+
+if [ -f sos_commands/filesys/blkid_-c_.dev.null ]; then 
+    egrep -w '(ext2|ext3|ext4|xfs|btrfs)' sos_commands/filesys/blkid_-c_.dev.null | \
+		sed -e 's/ \+ /\t/g' -e 's/^/   /'
+fi
+
+printf "[Filesystem disk space usage]\n"
+
+if [ -f df ]; then
+    egrep -v '(proc|sysfs|devpts|tmpfs|none|sunrpc|nfsd)' df | \
+		sed -e 's/ \+ /\t/g' -e 's/^/   /'
+fi
+
+printf "[Block devices]\n"
+
+if [ -f sos_commands/filesys/lsblk ]; then
+	cat sos_commands/filesys/lsblk | \
+		sed 's/^/   /'
+fi
+
+printf "[Processes in D-state]\n"
+
+if [ -f ps ]; then
+    printf "   PID\tSTAT\tCOMMAND\n"
+    awk '{print $2"\t"$8"\t"$11 }' ps |grep -w "D" | \
+		sed 's/^/   /'
+fi
+
+# End of script
